@@ -49,6 +49,12 @@
     let isAnalyzing = false;
     let audioInitialized = false;
     let mediaSource = null;
+    let gainNode = null;
+    let scriptProcessor = null;
+
+    // Alternative: Use a hidden audio element for analysis
+    let hiddenAudio = null;
+    let isUsingHiddenAudio = false;
 
     // Function to calculate RMS (Root Mean Square) for volume detection
     const rms = arr => Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
@@ -56,6 +62,14 @@
     // Clean up existing audio connections
     function cleanupAudio() {
         try {
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+            if (gainNode) {
+                gainNode.disconnect();
+                gainNode = null;
+            }
             if (mediaSource) {
                 mediaSource.disconnect();
                 mediaSource = null;
@@ -64,117 +78,215 @@
                 audioCtx.close();
                 audioCtx = null;
             }
+            if (hiddenAudio) {
+                hiddenAudio.pause();
+                hiddenAudio.remove();
+                hiddenAudio = null;
+            }
             analyser = null;
             buf = null;
             isAnalyzing = false;
             audioInitialized = false;
+            isUsingHiddenAudio = false;
             console.log('Auto-2x extension: Audio cleanup completed');
         } catch (error) {
             console.warn('Auto-2x extension: Error during cleanup:', error);
         }
     }
 
-    // Initialize audio analysis with better error handling
-    async function initAudioAnalysis() {
-        if (audioInitialized) {
-            console.log('Auto-2x extension: Audio already initialized');
-            return true;
-        }
-
+    // Alternative approach: Create a hidden audio element that mirrors the video
+    async function initHiddenAudioAnalysis() {
         try {
-            // Clean up any existing connections first
-            cleanupAudio();
+            console.log('Auto-2x extension: Trying hidden audio approach...');
+            
+            // Get the video source URL
+            const videoSrc = video.currentSrc || video.src;
+            if (!videoSrc) {
+                console.warn('Auto-2x extension: No video source found');
+                return false;
+            }
 
-            // Create new AudioContext
+            // Create hidden audio element
+            hiddenAudio = document.createElement('audio');
+            hiddenAudio.src = videoSrc;
+            hiddenAudio.crossOrigin = 'anonymous';
+            hiddenAudio.style.display = 'none';
+            hiddenAudio.muted = true; // Mute it so we don't hear double audio
+            document.body.appendChild(hiddenAudio);
+
+            // Sync with video
+            const syncAudio = () => {
+                if (hiddenAudio && video) {
+                    hiddenAudio.currentTime = video.currentTime;
+                    if (video.paused) {
+                        hiddenAudio.pause();
+                    } else {
+                        hiddenAudio.play().catch(() => {}); // Ignore play errors
+                    }
+                }
+            };
+
+            // Add sync listeners
+            video.addEventListener('timeupdate', syncAudio);
+            video.addEventListener('play', syncAudio);
+            video.addEventListener('pause', syncAudio);
+            video.addEventListener('seeked', syncAudio);
+
+            // Create audio context for the hidden audio
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             
-            // Resume context if it's suspended
             if (audioCtx.state === 'suspended') {
                 await audioCtx.resume();
-                console.log('Auto-2x extension: AudioContext resumed');
             }
 
-            // Check if video is ready
-            if (video.readyState < 2) {
-                console.log('Auto-2x extension: Video not ready, waiting...');
-                await new Promise(resolve => {
-                    const checkReady = () => {
-                        if (video.readyState >= 2) {
-                            resolve();
-                        } else {
-                            setTimeout(checkReady, 100);
-                        }
-                    };
-                    checkReady();
-                });
-            }
-
-            // Try to create media source - this is where the error occurs
-            try {
-                mediaSource = audioCtx.createMediaElementSource(video);
-                console.log('Auto-2x extension: Media source created successfully');
-            } catch (sourceError) {
-                console.warn('Auto-2x extension: Cannot create media source (likely already connected):', sourceError.message);
-                
-                // Try alternative approach - create a new audio context with different settings
-                audioCtx.close();
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-                    latencyHint: 'interactive',
-                    sampleRate: 44100
-                });
-                
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
-                
-                // If this still fails, we'll use fallback method
-                try {
-                    mediaSource = audioCtx.createMediaElementSource(video);
-                    console.log('Auto-2x extension: Media source created on second attempt');
-                } catch (secondError) {
-                    console.warn('Auto-2x extension: Still cannot create media source, using fallback method');
-                    cleanupAudio();
-                    return false; // Use fallback
-                }
-            }
-
-            // Create analyser
+            // Try to connect to hidden audio
+            mediaSource = audioCtx.createMediaElementSource(hiddenAudio);
             analyser = audioCtx.createAnalyser();
             analyser.fftSize = 512;
             analyser.smoothingTimeConstant = 0.8;
             
-            // Connect the audio graph
             mediaSource.connect(analyser);
-            analyser.connect(audioCtx.destination);
+            // Don't connect to destination to avoid audio output
 
             buf = new Float32Array(analyser.frequencyBinCount);
             isAnalyzing = true;
             audioInitialized = true;
+            isUsingHiddenAudio = true;
             
-            console.log('Auto-2x extension: Audio analysis initialized successfully');
+            console.log('Auto-2x extension: Hidden audio analysis initialized');
             return true;
         } catch (error) {
-            console.warn('Auto-2x extension: Failed to initialize audio analysis:', error);
+            console.warn('Auto-2x extension: Hidden audio approach failed:', error);
             cleanupAudio();
             return false;
         }
     }
 
-    // Fallback method using video properties and heuristics
+    // Original approach: Direct video analysis
+    async function initDirectAudioAnalysis() {
+        try {
+            console.log('Auto-2x extension: Trying direct video analysis...');
+            
+            // Create new AudioContext
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
+            // Wait for video to be ready
+            if (video.readyState < 2) {
+                await new Promise(resolve => {
+                    const checkReady = () => {
+                        if (video.readyState >= 2) resolve();
+                        else setTimeout(checkReady, 100);
+                    };
+                    checkReady();
+                });
+            }
+
+            // Try to create media source
+            mediaSource = audioCtx.createMediaElementSource(video);
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.8;
+            
+            // Create gain node to avoid interfering with existing audio
+            gainNode = audioCtx.createGain();
+            gainNode.gain.value = 1.0;
+            
+            mediaSource.connect(analyser);
+            analyser.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            buf = new Float32Array(analyser.frequencyBinCount);
+            isAnalyzing = true;
+            audioInitialized = true;
+            
+            console.log('Auto-2x extension: Direct audio analysis initialized');
+            return true;
+        } catch (error) {
+            console.warn('Auto-2x extension: Direct audio analysis failed:', error.message);
+            cleanupAudio();
+            return false;
+        }
+    }
+
+    // Enhanced heuristic method using video properties and visual cues
     function checkVideoVolumeHeuristic() {
-        // Simple heuristic based on video state
+        // If video is muted or volume is 0, consider it silent
         if (video.muted || video.volume === 0) {
-            return true; // Consider muted as "silent"
+            return true;
         }
         
-        // Check if video is paused (not really silent, but no audio)
+        // If video is paused, don't speed up
         if (video.paused) {
-            return false; // Don't speed up paused videos
+            return false;
+        }
+
+        // Check for YouTube-specific indicators
+        if (window.location.hostname.includes('youtube.com')) {
+            // Look for YouTube's volume indicator
+            const volumeSlider = document.querySelector('.ytp-volume-slider-handle');
+            if (volumeSlider) {
+                const volumeLevel = volumeSlider.style.left;
+                if (volumeLevel === '0%' || volumeLevel === '0px') {
+                    return true;
+                }
+            }
+
+            // Check if captions are showing (might indicate speech)
+            const captions = document.querySelector('.ytp-caption-segment');
+            if (captions && captions.textContent.trim()) {
+                return false; // If there are captions, probably not silent
+            }
+
+            // Check video progress vs duration for potential silent sections
+            const currentTime = video.currentTime;
+            const duration = video.duration;
+            
+            // This is a very basic heuristic - in real lectures, 
+            // silent moments often occur at regular intervals
+            if (duration > 0) {
+                const progress = currentTime / duration;
+                // Very basic pattern detection - this could be improved
+                const timeInSegment = currentTime % 30; // 30-second segments
+                
+                // Assume potential silence in certain patterns
+                // This is quite crude and would need refinement
+                if (timeInSegment > 20 && timeInSegment < 25) {
+                    return Math.random() < 0.3; // 30% chance of being "silent"
+                }
+            }
         }
         
-        // For videos without audio analysis, we'll be conservative
-        // and not speed up unless we're really sure
+        // Default to not silent for safety
         return false;
+    }
+
+    // Main initialization function that tries multiple approaches
+    async function initAudioAnalysis() {
+        if (audioInitialized) {
+            return true;
+        }
+
+        // Try direct analysis first
+        let success = await initDirectAudioAnalysis();
+        if (success) {
+            console.log('Auto-2x extension: Using direct audio analysis');
+            return true;
+        }
+
+        // Try hidden audio approach
+        success = await initHiddenAudioAnalysis();
+        if (success) {
+            console.log('Auto-2x extension: Using hidden audio analysis');
+            return true;
+        }
+
+        // Fall back to heuristic method
+        console.log('Auto-2x extension: Using heuristic method');
+        return false; // Will use heuristic in tick()
     }
 
     // Listen for changes coming from the Options page
@@ -193,49 +305,52 @@
                 cleanupAudio();
             } else {
                 // Re-initialize when enabled
-                tryInitAudio();
+                setTimeout(tryInitAudio, 500);
             }
         }
     });
 
-    // Try to initialize audio analysis when user interacts with the page
+    // Try to initialize audio analysis
     const tryInitAudio = async () => {
         if (!audioInitialized && settings.enabled) {
             console.log('Auto-2x extension: Attempting to initialize audio...');
             const success = await initAudioAnalysis();
             if (success) {
                 console.log('Auto-2x extension: Audio initialization successful');
-                // Remove event listeners since we succeeded
-                document.removeEventListener('click', tryInitAudio);
-                document.removeEventListener('keydown', tryInitAudio);
-                video.removeEventListener('play', tryInitAudio);
-                video.removeEventListener('loadeddata', tryInitAudio);
             } else {
-                console.log('Auto-2x extension: Audio initialization failed, will use fallback method');
+                console.log('Auto-2x extension: Using fallback heuristic method');
             }
         }
     };
 
-    // Add event listeners to try initializing audio on user interaction
-    document.addEventListener('click', tryInitAudio, { once: false });
-    document.addEventListener('keydown', tryInitAudio, { once: false });
-    video.addEventListener('play', tryInitAudio, { once: false });
-    video.addEventListener('loadeddata', tryInitAudio, { once: false });
+    // Add event listeners for user interaction
+    const initOnInteraction = () => {
+        tryInitAudio();
+        // Remove listeners after first successful interaction
+        document.removeEventListener('click', initOnInteraction);
+        document.removeEventListener('keydown', initOnInteraction);
+    };
 
-    // Try to initialize immediately (might work on some sites)
-    setTimeout(tryInitAudio, 1000);
+    document.addEventListener('click', initOnInteraction);
+    document.addEventListener('keydown', initOnInteraction);
+    video.addEventListener('play', tryInitAudio);
+    video.addEventListener('loadeddata', tryInitAudio);
 
-    // Watch for video element changes (YouTube dynamically replaces video elements)
+    // Try to initialize after a delay
+    setTimeout(tryInitAudio, 2000);
+
+    // Watch for video element changes
     const videoObserver = new MutationObserver(() => {
         const newVideo = document.querySelector('video');
         if (newVideo && newVideo !== video) {
-            console.log('Auto-2x extension: New video element detected, reinitializing...');
+            console.log('Auto-2x extension: New video element detected');
             cleanupAudio();
-            // Restart the whole process with the new video element
+            videoObserver.disconnect();
+            // Restart with new video
             setTimeout(() => {
                 window.auto2xExtensionLoaded = false;
                 main();
-            }, 500);
+            }, 1000);
         }
     });
 
@@ -244,6 +359,10 @@
         subtree: true
     });
 
+    let lastVolumeCheck = 0;
+    let volumeHistory = [];
+    const VOLUME_HISTORY_SIZE = 10;
+
     function tick() {
         if (!settings.enabled) {
             requestAnimationFrame(tick);
@@ -251,6 +370,7 @@
         }
 
         let isQuiet = false;
+        const now = performance.now();
 
         if (isAnalyzing && analyser && buf) {
             try {
@@ -258,26 +378,44 @@
                 const vol = rms(buf);
                 isQuiet = vol < settings.SILENCE_THRESHOLD;
                 
-                // Debug logging (remove in production)
-                if (Math.random() < 0.01) { // Log 1% of the time to avoid spam
-                    console.log('Auto-2x extension: Volume level:', vol.toFixed(4), 'Threshold:', settings.SILENCE_THRESHOLD, 'Quiet:', isQuiet);
+                // Keep volume history for better detection
+                volumeHistory.push(vol);
+                if (volumeHistory.length > VOLUME_HISTORY_SIZE) {
+                    volumeHistory.shift();
+                }
+                
+                // Use average of recent volumes for more stable detection
+                const avgVolume = volumeHistory.reduce((a, b) => a + b, 0) / volumeHistory.length;
+                isQuiet = avgVolume < settings.SILENCE_THRESHOLD;
+                
+                // Debug logging (reduced frequency)
+                if (now - lastVolumeCheck > 2000) { // Every 2 seconds
+                    console.log('Auto-2x extension: Avg volume:', avgVolume.toFixed(4), 'Threshold:', settings.SILENCE_THRESHOLD, 'Quiet:', isQuiet);
+                    lastVolumeCheck = now;
                 }
             } catch (error) {
                 console.warn('Auto-2x extension: Audio analysis error:', error);
                 isAnalyzing = false;
-                // Try to reinitialize
-                setTimeout(tryInitAudio, 1000);
+                // Don't retry immediately to avoid spam
+                setTimeout(tryInitAudio, 5000);
             }
         } else {
-            // Use fallback method
+            // Use enhanced heuristic method
             isQuiet = checkVideoVolumeHeuristic();
+            
+            // Debug logging for heuristic method
+            if (now - lastVolumeCheck > 5000) { // Every 5 seconds
+                console.log('Auto-2x extension: Using heuristic method, quiet:', isQuiet);
+                lastVolumeCheck = now;
+            }
         }
 
+        // Apply speed changes with grace period
         if (isQuiet) {
             if (silentSince === null) {
-                silentSince = performance.now();
+                silentSince = now;
             }
-            if (performance.now() - silentSince > settings.GRACE_MS &&
+            if (now - silentSince > settings.GRACE_MS &&
                 video.playbackRate !== settings.FAST_RATE) {
                 video.playbackRate = settings.FAST_RATE;
                 console.log('Auto-2x extension: Speeding up to', settings.FAST_RATE);
@@ -302,7 +440,7 @@
         videoObserver.disconnect();
     });
 
-    // Clean up when video ends or errors
+    // Clean up on video events
     video.addEventListener('ended', cleanupAudio);
     video.addEventListener('error', cleanupAudio);
 

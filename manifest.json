@@ -1,7 +1,7 @@
 {
     "name": "Auto-2× on Silence",
     "description": "Plays videos at 2× speed whenever the audio is (almost) silent.",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "manifest_version": 3,
     "permissions": [
         "activeTab",
@@ -18,7 +18,8 @@
             "js": [
                 "content.js"
             ],
-            "run_at": "document_idle"
+            "run_at": "document_idle",
+            "all_frames": false
         }
     ],
     "options_page": "options.html",
@@ -28,5 +29,6 @@
     },
     "icons": {
         "128": "icon.png"
-    }
+    },
+    "web_accessible_resources": []
 }

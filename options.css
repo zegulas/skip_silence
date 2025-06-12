@@ -1,25 +1,55 @@
 body {
     font: 14px/1.4 system-ui, sans-serif;
     padding: 16px 24px 32px;
+    max-width: 600px;
 }
 
 h1 {
     font-size: 20px;
     margin-top: 0;
+    color: #333;
+}
+
+h2 {
+    font-size: 16px;
+    margin-top: 24px;
+    color: #555;
+}
+
+.info {
+    background: #f0f8ff;
+    border: 1px solid #cce7ff;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 20px;
+}
+
+.info p {
+    margin: 8px 0;
 }
 
 form {
-    max-width: 320px;
+    max-width: 400px;
 }
 
 label {
     display: block;
-    margin: 12px 0;
+    margin: 16px 0;
+    font-weight: 500;
 }
 
 input[type=number] {
     width: 100%;
-    padding: 4px;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+input[type=number]:focus {
+    outline: none;
+    border-color: #4285f4;
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.2);
 }
 
 .checkbox {
@@ -28,25 +58,66 @@ input[type=number] {
     gap: 8px;
 }
 
+.checkbox input[type=checkbox] {
+    transform: scale(1.2);
+}
+
 .hint {
     color: #777;
     font-size: 12px;
     margin-left: 4px;
+    font-weight: normal;
 }
 
 .buttons {
-    margin-top: 18px;
+    margin-top: 24px;
     display: flex;
-    gap: 8px;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 
 button {
-    padding: 6px 16px;
+    padding: 8px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+button[type=submit] {
+    background: #4285f4;
+    color: white;
+    border-color: #4285f4;
+}
+
+button:hover {
+    background: #f5f5f5;
+}
+
+button[type=submit]:hover {
+    background: #3367d6;
 }
 
 #status {
-    height: 18px;
+    height: 20px;
     color: green;
     font-size: 12px;
-    margin-top: 8px;
+    margin-top: 12px;
+    font-weight: 500;
+}
+
+.troubleshooting {
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.troubleshooting ul {
+    padding-left: 20px;
+}
+
+.troubleshooting li {
+    margin: 8px 0;
+    color: #666;
 }

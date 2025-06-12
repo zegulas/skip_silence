@@ -1,11 +1,12 @@
 {
     "name": "Auto-2× on Silence",
     "description": "Plays videos at 2× speed whenever the audio is (almost) silent.",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "manifest_version": 3,
     "permissions": [
         "activeTab",
-        "storage"
+        "storage",
+        "scripting"
     ],
     "host_permissions": [
         "*://*/*"
